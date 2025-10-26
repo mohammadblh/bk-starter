@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+  <meta charset="UTF-8">
+  <title>OTP Authentication</title>
+</head>
+<body>
+  <h1>احراز هویت با OTP</h1>
+  <input type="text" id="phoneNumber" placeholder="شماره تلفن (مثال: +989123456789)">
+  <button onclick="sendOTP()">ارسال کد</button>
+  <br><br>
+  <input type="text" id="verificationCode" placeholder="کد تأیید">
+  <button onclick="verifyOTP()">تأیید کد</button>
+
+    <script type="module">
+        // وارد کردن ماژول‌های Firebase
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js';
+        import { getAuth, signInWithPhoneNumber, RecaptchaVerifier } from 'https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAaGe55xZM9RV9ghXTeDTsDp5T_i1SLkPk",
+            authDomain: "commented-b455f.firebaseapp.com",
+            projectId: "commented-b455f",
+            storageBucket: "commented-b455f.firebasestorage.app",
+            messagingSenderId: "767695646704",
+            appId: "1:767695646704:web:ab592924ec95d05b853735",
+            measurementId: "G-QVQGF7X73D"
+        };
+
+        // مقداردهی فایربیس
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        console.log('blh', app)
+
+        // تابع ارسال OTP
+        window.sendOTP = function() {
+        const phoneNumber = document.getElementById('phoneNumber').value;
+        const appVerifier = new RecaptchaVerifier(auth, 'send-otp-button', {
+            'size': 'invisible'
+        });
+
+        signInWithPhoneNumber(auth, phoneNumber, appVerifier)
+            .then((confirmationResult) => {
+            window.confirmationResult = confirmationResult;
+            alert('کد OTP ارسال شد!');
+            }).catch((error) => {
+            console.error('خطا در ارسال OTP:', error);
+            alert('خطا: ' + error.message);
+            });
+        };
+
+        // تابع تأیید OTP
+        window.verifyOTP = function() {
+        const code = document.getElementById('verificationCode').value;
+        window.confirmationResult.confirm(code)
+            .then((result) => {
+            const user = result.user;
+            alert('احراز هویت موفقیت‌آمیز! UID: ' + user.uid);
+            }).catch((error) => {
+            console.error('خطا در تأیید OTP:', error);
+            alert('خطا: ' + error.message);
+            });
+        };
+    </script>
+  <!-- Firebase SDK -->
+  <!-- <script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.10.0/firebase-analytics.js"></script>
+  <script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyAaGe55xZM9RV9ghXTeDTsDp5T_i1SLkPk",
+        authDomain: "commented-b455f.firebaseapp.com",
+        projectId: "commented-b455f",
+        storageBucket: "commented-b455f.firebasestorage.app",
+        messagingSenderId: "767695646704",
+        appId: "1:767695646704:web:ab592924ec95d05b853735",
+        measurementId: "G-QVQGF7X73D"
+    };
+    function blh(){
+        console.log('blh', initializeApp(firebaseConfig))
+    }
+  </script>
+  <script>
+    // function blh(){
+    //     console.log('blh')
+    // }
+    // Import the functions you need from the SDKs you need
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-analytics.js";
+    // TODO: Add SDKs for Firebase products that you want to use
+    // https://firebase.google.com/docs/web/setup#available-libraries
+
+    // Your web app's Firebase configuration
+    // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+    
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    //  function blh(){
+    //     console.log('blh2')
+    //     const phoneNumber = document.getElementById('phoneNumber').value;
+    //     console.log('phoneNumber',phoneNumber)
+    //     const appVerifier = new firebase.auth.RecaptchaVerifier('send-otp-button', {
+    //         'size': 'invisible'
+    //     });
+    //     console.log('appVerifier',appVerifier)
+    // }
+    window.onload = function() {
+        console.log('load')
+        // تابع ارسال OTP
+        // function sendOTP() {
+        //     console.log('sendotp')
+        // const phoneNumber = document.getElementById('phoneNumber').value;
+        // const appVerifier = new firebase.auth.RecaptchaVerifier('send-otp-button', {
+        //     'size': 'invisible'
+        // });
+
+        // auth.signInWithPhoneNumber(phoneNumber, appVerifier)
+        //     .then((confirmationResult) => {
+        //     window.confirmationResult = confirmationResult;
+        //     alert('کد OTP ارسال شد!');
+        //     }).catch((error) => {
+        //     console.error('خطا در ارسال OTP:', error);
+        //     alert('خطا: ' + error.message);
+        //     });
+        // }
+
+        // تابع تأیید OTP
+        function verifyOTP() {
+        const code = document.getElementById('verificationCode').value;
+        window.confirmationResult.confirm(code)
+            .then((result) => {
+            const user = result.user;
+            alert('احراز هویت موفقیت‌آمیز! UID: ' + user.uid);
+            }).catch((error) => {
+            console.error('خطا در تأیید OTP:', error);
+            alert('خطا: ' + error.message);
+            });
+        }
+    }
+  </script> -->
+</body>
+</html>

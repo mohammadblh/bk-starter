@@ -1,0 +1,35 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3070:3070"
+      - "3071:3071"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      NODE_ENV: production
+    command: "node serverReview.js" 
+    networks:
+      - shared-network-6
+
+  mongodb:
+    image: mongo
+    container_name: mongodbg
+    ports:
+      - "27022:27017"
+    command: mongod --bind_ip 0.0.0.0
+    volumes:
+      - mongo_data_reveiew:/data/db
+    networks:
+      - shared-network-6
+
+volumes:
+   mongo_data_reveiw:    # نام منحصر به فرد برای ولوم
+    external: true   # اشاره به اینکه ولوم خارجی است
+
+networks:
+  shared-network-6:
+    driver: bridge

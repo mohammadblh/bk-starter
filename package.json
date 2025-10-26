@@ -1,0 +1,44 @@
+{
+  "name": "company-review-system",
+  "version": "1.0.0",
+  "description": "سیستم نظردهی و بررسی شرکت‌ها",
+  "main": "serverReview.js",
+  "scripts": {
+    "start": "node serverReview.js",
+    "dev": "nodemon serverReview.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [
+    "company",
+    "review",
+    "rating",
+    "express",
+    "mongodb"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.826.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "firebase-admin": "^13.4.0",
+    "fs": "^0.0.1-security",
+    "helmet": "^6.0.1",
+    "joi": "^17.13.3",
+    "jsonwebtoken": "^9.0.0",
+    "mongoose": "^7.0.3",
+    "morgan": "^1.10.0",
+    "multer": "^2.0.1",
+    "sharp": "^0.34.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "mongodb-memory-server": "^10.1.4",
+    "nodemon": "^2.0.22",
+    "supertest": "^7.1.1"
+  }
+}
