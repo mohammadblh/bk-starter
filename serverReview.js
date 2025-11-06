@@ -11,13 +11,6 @@ require('dotenv').config();
 const authRoutes = require('./routes/auth.routes');
 // const userRoutes = require('./routes/user.routes');
 // const uploadRoutes = require('./routes/uploader.routes');
-// const companyRoutes = require('./routes/company.routes');
-// const reviewRoutes = require('./routes/review.routes');
-// const responseRoutes = require('./routes/response.routes');
-// const categoryRoutes = require('./routes/category.routes');
-// const tagRoutes = require('./routes/tag.routes');
-// const reportRoutes = require('./routes/report.routes');
-// const notificationRoutes = require('./routes/notification.routes');
 
 // Initialize express app
 const app = express();
@@ -30,7 +23,6 @@ app.use(helmet());
 app.use(morgan('dev'));
 
 // Connect to MongoDB
-// mongoose.connect('mongodb://root:example@mongodbg:27022/admin?replicaSet=rs0', {
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://mongodbg:27017/starter', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -42,17 +34,10 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://mongodbg:27017/starter', 
 app.use('/api/auth', authRoutes);
 // app.use('/api/uploader', uploadRoutes);
 // app.use('/api/users', userRoutes);
-// app.use('/api/companies', companyRoutes);
-// app.use('/api/reviews', reviewRoutes);
-// app.use('/api/responses', responseRoutes);
-// app.use('/api/categories', categoryRoutes);
-// app.use('/api/tags', tagRoutes);
-// app.use('/api/reports', reportRoutes);
-// app.use('/api/notifications', notificationRoutes);
 
 // Root route
 app.get('/', (req, res) => {
-  res.send('Welcome to Company Review API');
+  res.send('Welcome to Starter API');
 });
 
 // Error handling middleware

@@ -1,7 +1,7 @@
 {
-  "name": "company-review-system",
+  "name": "starter",
   "version": "1.0.0",
-  "description": "سیستم نظردهی و بررسی شرکت‌ها",
+  "description": "starter project for backend development",
   "main": "serverReview.js",
   "scripts": {
     "start": "node serverReview.js",

@@ -1,6 +1,5 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/user.model');
-const School = require('../models/school.model');
 const blhLog = require('./logger.middleware');
 
 // میدلور بررسی توکن احراز هویت
