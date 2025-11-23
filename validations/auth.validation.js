@@ -13,6 +13,5 @@ const adminSchema = Joi.object({
 });
 
 module.exports =  {
-    requestSchema,
     adminSchema
 }

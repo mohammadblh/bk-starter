@@ -56,7 +56,7 @@ app.listen(PORT, () => {
 });
 
 // HTTPS Server with SSL
-!process.env.IS_DEVELOPMENT && https.createServer({
+!process.env.NODE_ENV && https.createServer({
   key: fs.readFileSync('/etc/letsencrypt/live/effiscope.space/privkey.pem'),
   cert: fs.readFileSync('/etc/letsencrypt/live/effiscope.space/fullchain.pem'),
 }, app).listen(HTTPS_PORT, (err) => {

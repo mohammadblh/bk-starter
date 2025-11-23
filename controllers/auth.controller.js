@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user.model');
-const {requestSchema, adminSchema} = require('../validations/auth.validation');
+const { adminSchema} = require('../validations/auth.validation');
 
 // ثبت ادمین جدید
 exports.registerAdmin = async (req, res) => {
