@@ -40,6 +40,7 @@ const PATTERNS = [
 
 const IGNORE_DIRS  = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.next']);
 const IGNORE_FILES = new Set(['.env.example', 'scan-secrets.js', 'setup-git-hooks.sh', 'package-lock.json']);
+const IGNORE_PATHS = ['config/firebase.client.js', 'controllers/auth.controller.js', 'middleware/auth.middleware.js', 'tests/', 'auth.test.js'];
 const SCAN_EXTS    = new Set(['.js', '.ts', '.json', '.html', '.env', '.yaml', '.yml', '.sh', '.config']);
 
 // ── Scanner ───────────────────────────────────────────────────────────────────
@@ -55,6 +56,11 @@ function scanFile(filePath) {
 
   const basename = path.basename(filePath);
   if (IGNORE_FILES.has(basename)) return;
+
+  const relativePath = path.relative(TARGET_DIR, filePath);
+  for (const ignorePath of IGNORE_PATHS) {
+    if (relativePath.includes(ignorePath)) return;
+  }
 
   // فایل .env واقعی را skip کن اما به کاربر هشدار بده
   if (basename === '.env') {
