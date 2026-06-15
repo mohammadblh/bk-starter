@@ -1,85 +1,180 @@
-const path = require('path');
-const sharp = require('sharp');
-const fs = require('fs').promises;
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+'use strict';
 
-// AWS S3 configuration
-const s3Client = new S3Client({
-  region: "us-west-1",
-  credentials: {
-    accessKeyId: "ACCESS_KEY",
-    secretAccessKey: "SECRET_KEY",
-  },
-});
+/**
+ * SCN-051 — Upload Controller (نسخه امن)
+ *
+ * AFTER (امن):
+ * ─────────────────────────────────────────
+ *   اعتبارنامه‌ها از env.config.js می‌آیند که خودش از .env می‌خواند
+ */
 
-exports.uploadImage = async (req, res) => {
-    try {
-        const { file } = req;
-        if (!file) return res.status(400).send('No file uploaded');
-        let processedFilePath;
-        // let coverFilePath;
-        let s3Key;
-        // let coverS3Key;
-        // let coverUrl;
+const path   = require('path');
+const crypto = require('crypto');
+const {
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+} = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
-        const mediaType = file.mimetype.split('/')[0];
+const { getS3Client }   = require('../config/aws.config');
+const { getConfig }     = require('../config/env.config');
 
-        if (mediaType === 'image') {
-            // Resize image
-            processedFilePath = `./uploads/${file.filename.replace(/\.[^/.]+$/, '')}-resized.jpg`;
-            await sharp(file.path)
-                // .resize(null, 700, { fit: 'inside' })
-                .resize(null, 400, { fit: 'cover' })
-                .webp({ quality: 70 })
-                // .jpeg({ quality: 60 })
-                .toFile(processedFilePath);
-            s3Key = `uploads/${file.filename.replace(/\.[^/.]+$/, '')}-resized.jpg`;
-        } else {
-            return res.status(400).send('Invalid media type');
-        }
+// ── Constants ────────────────────────────────────────────────────────────────
 
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
 
-        // Upload to S3
-        const fileContent = await fs.readFile(processedFilePath);
-        const params = {
-            Bucket: "doovshi-bucket",
-            Key: s3Key,
-            Body: fileContent,
-            ContentType: "image/jpeg"
-            // ContentType: mediaType === 'image' ? "image/jpeg" : "video/mp4"
-        };
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-        const command = new PutObjectCommand(params);
-        const data = await s3Client.send(command);
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-        // Delete temporary files
-        try {
-            await fs.unlink(file.path); // فایل اصلی
-            await fs.unlink(processedFilePath); // فایل پردازش شده
-            // if (mediaType === 'video') {
-            //     await fs.unlink(coverFilePath); // فایل کاور
-            // }
-        } catch (error) {
-            console.error('Error deleting files:', error);
-        }
+/**
+ * SCN-020 — تولید کلید امن برای S3 (جلوگیری از Path Traversal)
+ *
+ * BEFORE (ناامن): `uploads/${userId}/${filename}`
+ *   → مهاجم می‌تواند userId = "../../admin" بفرستد
+ *
+ * AFTER (امن): UUID + sanitize شده
+ */
+function buildS3Key(userId, originalName) {
+  // فقط کاراکترهای امن در userId مجاز هستند
+  const safeUserId = String(userId).replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!safeUserId || safeUserId.length > 64) {
+    throw new Error('شناسه کاربر نامعتبر است');
+  }
 
-        // Send S3 URLs in response
-        const s3Url = `https://doovshi-bucket.s3.us-west-1.amazonaws.com/${params.Key}`;
-        
-        // اگر ویدیو باشد، هم URL ویدیو و هم URL کاور را برمی‌گردانیم
-        // if (mediaType === 'video') {
-        //     res.json({ url: s3Url, cover: coverUrl });
-        // } else {
-            res.json({
-                message: 'image upload successfully',
-                url: s3Url
-            });
-        // }
+  // نام فایل به UUID تبدیل می‌شود تا path traversal ممکن نباشد
+  const ext      = path.extname(originalName).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const safeName = `${crypto.randomUUID()}.${ext}`;
 
-
-        // res.json({ message: "Profile image uploaded and compressed", path: `${process.env.API_BASEURL}/${outputPath}` });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Error uploading profile image" });
-    }
+  return `uploads/${safeUserId}/${safeName}`;
 }
+
+// ── Controller methods ───────────────────────────────────────────────────────
+
+async function uploadFile(req, res) {
+  try {
+    const { file } = req;
+    const userId   = req.user?.id; // از JWT middleware
+
+    if (!file) {
+      return res.status(400).json({ message: 'فایلی انتخاب نشده' });
+    }
+    if (!userId) {
+      return res.status(401).json({ message: 'احراز هویت الزامی است' });
+    }
+
+    // اعتبارسنجی MIME type (از header فایل، نه extension)
+    if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      return res.status(400).json({ message: 'نوع فایل مجاز نیست' });
+    }
+
+    // اعتبارسنجی حجم
+    if (file.size > MAX_FILE_SIZE) {
+      return res.status(400).json({ message: 'حجم فایل بیش از حد مجاز است (حداکثر ۱۰ مگابایت)' });
+    }
+
+    const { aws } = getConfig();
+    const s3Key   = buildS3Key(userId, file.originalname);
+
+    const command = new PutObjectCommand({
+      Bucket:      aws.s3Bucket,
+      Key:         s3Key,
+      Body:        file.buffer,
+      ContentType: file.mimetype,
+      // جلوگیری از اجرای مستقیم فایل در S3
+      ContentDisposition: 'attachment',
+      // metadata بدون اطلاعات حساس
+      Metadata: {
+        uploadedBy: safeUserId(userId),
+        uploadedAt: new Date().toISOString(),
+      },
+      // جلوگیری از دسترسی عمومی
+      ACL: 'private',
+      // رمزنگاری در سمت سرور
+      ServerSideEncryption: 'AES256',
+    });
+
+    await getS3Client().send(command);
+
+    return res.status(201).json({
+      message: 'فایل با موفقیت آپلود شد',
+      key: s3Key,
+      // URL مستقیم S3 را برنگردان — از signed URL استفاده کن
+    });
+
+  } catch (err) {
+    // SCN-092: هیچ جزئیاتی از خطا به client نمی‌رود
+    console.error('[Upload] Error:', err.message);
+    return res.status(500).json({ message: 'خطای سرور' });
+  }
+}
+
+/**
+ * دریافت Signed URL برای دسترسی موقت به فایل (به جای دسترسی عمومی)
+ */
+async function getFileUrl(req, res) {
+  try {
+    const { key }  = req.params;
+    const userId   = req.user?.id;
+    const { aws }  = getConfig();
+
+    // بررسی ownership: فقط مالک فایل می‌تواند به آن دسترسی داشته باشد
+    const safeId = safeUserId(userId);
+    if (!key.startsWith(`uploads/${safeId}/`)) {
+      return res.status(403).json({ message: 'دسترسی غیرمجاز' });
+    }
+
+    const command = new GetObjectCommand({
+      Bucket: aws.s3Bucket,
+      Key:    decodeURIComponent(key),
+    });
+
+    // URL موقت — فقط ۱۵ دقیقه معتبر است
+    const url = await getSignedUrl(getS3Client(), command, { expiresIn: 900 });
+
+    return res.json({ url });
+
+  } catch (err) {
+    console.error('[GetFile] Error:', err.message);
+    return res.status(500).json({ message: 'خطای سرور' });
+  }
+}
+
+async function deleteFile(req, res) {
+  try {
+    const { key } = req.params;
+    const userId  = req.user?.id;
+    const { aws } = getConfig();
+
+    const safeId = safeUserId(userId);
+    if (!key.startsWith(`uploads/${safeId}/`)) {
+      return res.status(403).json({ message: 'دسترسی غیرمجاز' });
+    }
+
+    const command = new DeleteObjectCommand({
+      Bucket: aws.s3Bucket,
+      Key:    decodeURIComponent(key),
+    });
+
+    await getS3Client().send(command);
+    return res.json({ message: 'فایل حذف شد' });
+
+  } catch (err) {
+    console.error('[DeleteFile] Error:', err.message);
+    return res.status(500).json({ message: 'خطای سرور' });
+  }
+}
+
+// ── Private helpers ──────────────────────────────────────────────────────────
+
+function safeUserId(userId) {
+  return String(userId).replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+module.exports = { uploadFile, getFileUrl, deleteFile };

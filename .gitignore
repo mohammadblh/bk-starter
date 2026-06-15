@@ -2,4 +2,16 @@
 error-log.log
 /files
 /uploads
-.env
+.env# Secrets & credentials (SCN-051/052)
+.env.local
+.env.*.local
+.env.production
+*.pem
+*.key
+*service-account*.json
+*firebase-adminsdk*.json
+*credentials*.json
+config/secrets/
+# AWS
+.aws/
+aws-credentials
