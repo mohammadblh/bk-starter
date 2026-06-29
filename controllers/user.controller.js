@@ -1,159 +1,212 @@
 const User = require('../models/user.model');
+const bcrypt = require('bcryptjs');
 
 // دریافت لیست کاربران (فقط برای ادمین)
-// exports.getAllUsers = async (req, res) => {
-//   try {
-//     const { page = 1, limit = 10, search } = req.query;
+exports.getAllUsers = async (req, res) => {
+  try {
+    const { page = 1, limit = 10, search } = req.query;
     
-//     // ایجاد کوئری جستجو
-//     const query = {};
-//     if (search) {
-//       query.$or = [
-//         { username: { $regex: search, $options: 'i' } },
-//         { email: { $regex: search, $options: 'i' } },
-//         { fullName: { $regex: search, $options: 'i' } }
-//       ];
-//     }
+    // ایجاد کوئری جستجو
+    const query = {};
+    if (search) {
+      query.$or = [
+        { username: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { firstName: { $regex: search, $options: 'i' } },
+        { lastName: { $regex: search, $options: 'i' } }
+      ];
+    }
     
-//     // شمارش کل کاربران
-//     const total = await User.countDocuments(query);
+    // شمارش کل کاربران
+    const total = await User.countDocuments(query);
     
-//     // دریافت کاربران با صفحه‌بندی
-//     const users = await User.find(query)
-//       .select('-password')
-//       .sort({ createdAt: -1 })
-//       .skip((page - 1) * limit)
-//       .limit(parseInt(limit));
+    // دریافت کاربران با صفحه‌بندی
+    const users = await User.find(query)
+      .select('-password')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit));
     
-//     res.status(200).json({
-//       users,
-//       totalPages: Math.ceil(total / limit),
-//       currentPage: parseInt(page),
-//       totalUsers: total
-//     });
-//   } catch (error) {
-//     res.status(500).json({ message: error.message });
-//   }
-// };
+    res.status(200).json({
+      users,
+      totalPages: Math.ceil(total / limit),
+      currentPage: parseInt(page),
+      totalUsers: total
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
 // دریافت اطلاعات یک کاربر با شناسه
-// exports.getUserById = async (req, res) => {
-//   try {
-//     const user = await User.findById(req.params.id).select('-password');
+exports.getUserById = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select('-password');
     
-//     if (!user) {
-//       return res.status(404).json({ message: 'User not found' });
-//     }
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
     
-//     // فقط ادمین یا خود کاربر می‌تواند اطلاعات کامل را ببیند
-//     if (req.userId !== req.params.id && req.userRole !== 'admin') {
-//       // برای سایر کاربران، فقط اطلاعات عمومی را برگردان
-//       return res.status(200).json({
-//         _id: user._id,
-//         username: user.username,
-//         fullName: user.fullName,
-//         profileImage: user.profileImage,
-//         bio: user.bio
-//       });
-//     }
-    
-//     res.status(200).json(user);
-//   } catch (error) {
-//     res.status(500).json({ message: error.message });
-//   }
-// };
+    res.status(200).json(user);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ایجاد کاربر جدید (ادمین)
+exports.createUser = async (req, res) => {
+  try {
+    const { firstName, lastName, username, email, phone, password, role, status } = req.body;
+
+    if (!firstName || !lastName || !username || !password || !role) {
+      return res.status(400).json({ message: 'All required fields must be provided.' });
+    }
+
+    // بررسی تکراری نبودن نام کاربری
+    const existingUsername = await User.findOne({ username });
+    if (existingUsername) {
+      return res.status(400).json({ message: 'Username is already taken.' });
+    }
+
+    // بررسی تکراری نبودن ایمیل
+    if (email) {
+      const existingEmail = await User.findOne({ email });
+      if (existingEmail) {
+        return res.status(400).json({ message: 'Email is already registered.' });
+      }
+    }
+
+    // بررسی تکراری نبودن تلفن
+    if (phone) {
+      const existingPhone = await User.findOne({ phone });
+      if (existingPhone) {
+        return res.status(400).json({ message: 'Phone is already registered.' });
+      }
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const newUser = new User({
+      firstName,
+      lastName,
+      username,
+      email,
+      phone,
+      password: hashedPassword,
+      role,
+      status: status !== undefined ? status : true
+    });
+
+    await newUser.save();
+
+    const userResponse = newUser.toObject();
+    delete userResponse.password;
+
+    res.status(201).json({
+      message: 'User successfully created.',
+      user: userResponse
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
 // بروزرسانی اطلاعات کاربر
-// exports.updateUser = async (req, res) => {
-//   try {
-//     // بررسی دسترسی (فقط خود کاربر یا ادمین)
-//     const user = await User.findById(req.params.id);
+exports.updateUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
     
-//     if (!user) {
-//       return res.status(404).json({ message: 'User not found' });
-//     }
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
     
-//     const currentUser = await User.findById(req.userId);
+    const { firstName, lastName, username, email, phone, password, role, status } = req.body;
     
-//     if (req.params.id !== req.userId && currentUser.role !== 'admin') {
-//       return res.status(403).json({ message: 'You do not have permission to edit this user.' });
-//     }
+    if (username && username !== user.username) {
+      const existingUsername = await User.findOne({ username });
+      if (existingUsername) {
+        return res.status(400).json({ message: 'Username is already taken.' });
+      }
+      user.username = username;
+    }
+
+    if (email && email !== user.email) {
+      const existingEmail = await User.findOne({ email });
+      if (existingEmail) {
+        return res.status(400).json({ message: 'Email is already registered.' });
+      }
+      user.email = email;
+    } else if (email === "") {
+      user.email = undefined;
+    }
+
+    if (phone && phone !== user.phone) {
+      const existingPhone = await User.findOne({ phone });
+      if (existingPhone) {
+        return res.status(400).json({ message: 'Phone is already registered.' });
+      }
+      user.phone = phone;
+    } else if (phone === "") {
+      user.phone = undefined;
+    }
     
-//     // فیلدهای قابل بروزرسانی
-//     const { fullName, profileImage, bio } = req.body;
+    if (firstName) user.firstName = firstName;
+    if (lastName) user.lastName = lastName;
+    if (role) user.role = role;
+    if (status !== undefined) user.status = status;
     
-//     // بروزرسانی فیلدها
-//     if (fullName) user.fullName = fullName;
-//     if (profileImage) user.profileImage = profileImage;
-//     if (bio) user.bio = bio;
+    if (password) {
+      user.password = await bcrypt.hash(password, 10);
+    }
     
-//     // ذخیره تغییرات
-//     await user.save();
+    await user.save();
     
-//     res.status(200).json({
-//       message: 'User information was successfully updated.',
-//       user: {
-//         _id: user._id,
-//         username: user.username,
-//         email: user.email,
-//         fullName: user.fullName,
-//         profileImage: user.profileImage,
-//         bio: user.bio,
-//         role: user.role,
-//         isActive: user.isActive
-//       }
-//     });
-//   } catch (error) {
-//     res.status(500).json({ message: error.message });
-//   }
-// };
+    const userResponse = user.toObject();
+    delete userResponse.password;
+    
+    res.status(200).json({
+      message: 'User information was successfully updated.',
+      user: userResponse
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// حذف کاربر (فقط ادمین)
+exports.deleteUser = async (req, res) => {
+  try {
+    const user = await User.findByIdAndDelete(req.params.id);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+    
+    res.status(200).json({
+      message: 'User successfully deleted.'
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
 // غیرفعال/فعال کردن کاربر (فقط ادمین)
-// exports.toggleUserStatus = async (req, res) => {
-//   try {
-//     const user = await User.findById(req.params.id);
+exports.toggleUserStatus = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
     
-//     if (!user) {
-//       return res.status(404).json({ message: 'User not found.' });
-//     }
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
     
-//     // تغییر وضعیت فعال بودن
-//     user.isActive = !user.isActive;
-//     await user.save();
+    user.status = !user.status;
+    await user.save();
     
-//     res.status(200).json({
-//       message: `User successfully ${user.isActive ? 'activated' : 'deactivated'}.`,
-//       isActive: user.isActive
-//     });
-//   } catch (error) {
-//     res.status(500).json({ message: error.message });
-//   }
-// };
-
-// تغییر نقش کاربر (فقط ادمین)
-// exports.changeUserRole = async (req, res) => {
-//   try {
-//     const { role } = req.body;
-    
-//     if (!role || !['user', 'company_manager', 'admin'].includes(role)) {
-//       return res.status(400).json({ message: 'The role is invalid.' });
-//     }
-    
-//     const user = await User.findById(req.params.id);
-    
-//     if (!user) {
-//       return res.status(404).json({ message: 'User not found' });
-//     }
-    
-//     // تغییر نقش کاربر
-//     user.role = role;
-//     await user.save();
-    
-//     res.status(200).json({
-//       message: 'User role successfully changed.',
-//       role: user.role
-//     });
-//   } catch (error) {
-//     res.status(500).json({ message: error.message });
-//   }
-// };
+    res.status(200).json({
+      message: `User successfully ${user.status ? 'activated' : 'deactivated'}.`,
+      status: user.status
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

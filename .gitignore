@@ -15,3 +15,5 @@ config/secrets/
 # AWS
 .aws/
 aws-credentials
+
+.env
