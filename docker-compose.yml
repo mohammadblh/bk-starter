@@ -3,34 +3,55 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # پورت فقط روی loopback باز می‌شود — nginx جلوی آن قرار می‌گیرد
     ports:
-      - "3070:3070"
-      - "3071:3071"
-    volumes:
-      - .:/app
-      - /app/node_modules
+      - "127.0.0.1:3000:3000"
     environment:
       NODE_ENV: production
-    command: "node serverReview.js"
+      PORT: 3000
+      # رمز مونگو از .env خوانده می‌شود — هرگز در این فایل hardcode نشود
+      MONGODB_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongodb:27017/starter?authSource=admin
+    env_file:
+      - .env
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
     networks:
-      - shared-network-6
+      - backend
 
   mongodb:
-    image: mongo:latest
-    container_name: mongodbg
-    ports:
-      - "27022:27017"
-    # 💡 فلگ --replSet rs0 اضافه شد و bind_ip اصلاح شد
-    command: mongod --bind_ip_all --replSet rs0
+    image: mongo:7
+    container_name: starter-mongodb
+    # بدون ports: — دیتابیس فقط از شبکه‌ی داخلی قابل دسترس است.
+    # نسخه‌ی قبلی با --bind_ip 0.0.0.0 و پورت باز، بدون احراز هویت
+    # روی اینترنت قرار می‌گرفت.
+    command: ["mongod", "--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
     volumes:
-      - mongo_data_review:/data/db
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     networks:
-      - shared-network-6
+      - backend
 
 volumes:
-  mongo_data_review:    # نام ولوم یکپارچه شد
-    external: true      # به این معنی که قبلاً با دستور docker volume create ساخته شده است
+  mongo_data:
 
 networks:
-  shared-network-6:
+  backend:
     driver: bridge

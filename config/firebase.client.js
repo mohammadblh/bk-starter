@@ -3,16 +3,9 @@
 /**
  * SCN-052 — Firebase Client Config (سمت سرور → ارسال به Frontend)
  *
- * BEFORE (ناامن — در testOTP.html):
- * ───────────────────────────────────────────────────────────────
- *   const firebaseConfig = {
- *     apiKey: "AIzaSyD-REAL-KEY-HERE",          ← در HTML عمومی!
- *     authDomain: "myapp.firebaseapp.com",
- *     projectId: "myapp-12345",
- *     storageBucket: "myapp.appspot.com",
- *     messagingSenderId: "123456789",
- *     appId: "1:123456789:web:abcdef"
- *   };
+ * BEFORE (ناامن): کلید واقعی Firebase مستقیماً داخل یک فایل HTML
+ * عمومی نوشته شده بود (tests/testOTP.html) و همراه با git history
+ * منتشر شد. آن فایل حذف و کلید باید revoke شود.
  *
  * WHY IT MATTERS:
  * ───────────────────────────────────────────────────────────────

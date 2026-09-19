@@ -30,7 +30,7 @@
 - [✨ Features](#-features)
 - [🛠️ Tech Stack](#️-tech-stack)
 - [🚀 Quick Start](#-quick-start)
-- [📖 Usage](#-usage)
+- [🔒 Security](#-security)
 - [🔄 CI/CD](#-cicd)
 - [🤝 Contributing](#-contributing)
 - [💬 Support](#-support)
@@ -43,7 +43,7 @@
 - 🔧 **Highly Configurable** - Easy to customize and extend
 - 📚 **Well Documented** - Comprehensive documentation and examples
 - ⚡ **High Performance** - Optimized for speed and efficiency
-- 🛡️ **Secure** - Built with security best practices
+- 🛡️ **Secure by default** - Fail-fast secret validation, rate limiting, CSP, CSRF protection, and security regression tests
 
 ## 🛠️ Tech Stack
 
@@ -59,44 +59,131 @@
 
 ### Prerequisites
 
-- 📦 Node.js (v16 or higher)
+- 📦 Node.js **v20+**
 - 🐳 Docker & Docker Compose
-- 📝 Git version control
+- 🍃 MongoDB (locally or via Docker)
 
 ### 📥 Installation
 
-1. **Clone the repository**
+```bash
+git clone https://github.com/mohammadblh/bk-starter.git
+cd bk-starter
+npm ci
+```
 
-   ```bash
-   git clone https://github.com/mohammadblh/bk-starter.git
-   cd bk-starter
-   ```
+### 🔑 Configuration
 
-2. **Install dependencies with Yarn**
+The app **fails to start** if required secrets are missing or weak — there are no
+insecure fallback values anywhere in the code.
 
-   ```bash
-   yarn install
-   yarn start
-   ```
+```bash
+cp .env.example .env
 
-3. **Run with Docker**
+# Generate a strong JWT secret (min 32 chars in dev, 64 in production)
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
 
-   ```bash
-   docker build -t bk-starter .
-   docker run -p 3000:3000 bk-starter
-   ```
+Fill in at minimum:
 
-## 📖 Usage
+| Variable | Required | Notes |
+|---|---|---|
+| `JWT_SECRET` | ✅ | ≥32 chars (≥64 in production). Placeholder-looking values are rejected. |
+| `MONGODB_URI` | ✅ | Use credentials in production: `mongodb://user:pass@host:27017/db?authSource=admin` |
+| `CORS_ORIGINS` | ✅ in prod | Comma-separated allowlist. `*` is rejected in production. |
+| `ADMIN_PANEL_ENABLED` | – | Defaults to `false`. |
 
-> 📝 **Note:** Detailed usage instructions and examples will be added here.
+### ▶️ Run
 
-For now, please refer to the source code and any existing documentation in the repository.
+```bash
+npm run dev     # development with nodemon
+npm start       # production
+npm test        # test suite incl. security regressions
+```
+
+### 🐳 Docker
+
+```bash
+# MONGO_USER / MONGO_PASSWORD are read from .env
+docker compose up --build
+```
+
+The image runs as the non-root `node` user, installs with `npm ci --omit=dev`,
+and `.dockerignore` keeps `.env`, `.git` and secret files out of the build context.
+MongoDB runs with `--auth` and is **not** published to the host.
+
+## 🔒 Security
+
+This starter is built to be secure by default. What that means concretely:
+
+### Authentication
+
+- JWT (HS256) with an explicitly pinned algorithm — `alg: none` tokens are rejected.
+- Passwords hashed with bcrypt (cost 12 by default, configurable).
+- Tokens are re-validated against the database on every request, so deactivating
+  or deleting a user revokes access immediately.
+- Login responses are identical for "unknown user" and "wrong password", and a
+  real bcrypt comparison runs either way so response timing does not leak which
+  accounts exist.
+- There is **no API-key bypass**. Authentication is the only way in.
+
+### Creating the first admin
+
+`POST /api/auth/register/admin` requires an existing admin. Bootstrap from the
+server instead:
+
+```bash
+npm run create-admin
+```
+
+### Admin panel
+
+Disabled by default. Enable with `ADMIN_PANEL_ENABLED=true`, then sign in at
+`/admin/login` with an account whose role is `admin`.
+
+- The session token lives in an `httpOnly`, `SameSite=Strict` cookie — JavaScript
+  cannot read it, so an XSS bug cannot steal the session.
+- Cookie-authenticated API calls additionally require an `X-Requested-With`
+  header, which a cross-origin page cannot set — this closes CSRF.
+- All values rendered from the database are HTML-escaped, and the panel ships
+  zero inline scripts or event handlers, so CSP can forbid `unsafe-inline` and
+  `unsafe-eval` outright.
+
+### Request hardening
+
+| Layer | Protection |
+|---|---|
+| `helmet` | CSP without `unsafe-eval`/inline scripts, HSTS, `frame-ancestors 'none'` |
+| `cors` | Explicit origin allowlist, never `*` |
+| `express-rate-limit` | 100 req/15 min globally, 5 attempts/15 min on auth routes |
+| Joi validation | Every route validates input — rejects NoSQL operators like `{"$gt":""}` |
+| `express-mongo-sanitize` | Second layer against operator injection |
+| `hpp` | Parameter pollution (`?role=user&role=admin`) |
+| Body limit | 100 kB by default |
+
+Error responses never include stack traces or database messages outside of
+`development`/`test`.
+
+### Secret hygiene
+
+```bash
+npm run scan-secrets          # scan the working tree
+npm run security:audit        # fail on high/critical dependency CVEs
+bash scripts/setup-git-hooks.sh   # install the pre-commit secret scan
+```
+
+Both checks also run as a gate in the Jenkins pipeline — a build carrying a
+leaked credential or a high-severity CVE does not deploy.
+
+> ⚠️ If you fork this repository, rotate every credential before deploying.
+> Deleting a secret from the working tree does not remove it from git history.
 
 ## 🔄 CI/CD
 
 This project uses automated CI/CD pipelines:
 
 - **Jenkins** - Continuous integration and deployment pipeline
+- **Security gate** - `scan-secrets` and `npm audit --audit-level=high` block the build before deploy
+- **Tests** - The suite includes regression tests for every vulnerability that has been fixed
 
 ## 🤝 Contributing
 

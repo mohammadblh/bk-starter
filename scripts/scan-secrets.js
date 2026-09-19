@@ -26,21 +26,26 @@ const PATTERNS = [
   { name: 'Firebase Config',   regex: /firebaseConfig\s*=\s*{[^}]*apiKey/gis },
 
   // JWT
-  { name: 'JWT Secret (weak)', regex: /jwt.{0,10}secret.{0,5}["'`]([^"'`]{4,32})["'`]/gi },
+  { name: 'JWT Secret (weak)', regex: /jwt.{0,10}secret.{0,5}["'`]([^"'`]{4,32})["'`]/gi, heuristic: true },
 
   // Generic secrets
-  { name: 'Generic API Key',   regex: /(?:api.?key|apiKey)\s*[:=]\s*["']([A-Za-z0-9_\-]{20,})["']/gi },
-  { name: 'Generic Password',  regex: /(?:password|passwd)\s*[:=]\s*["']([^"']{8,})["']/gi },
-  { name: 'Bearer Token',      regex: /Bearer\s+[A-Za-z0-9\-._~+/]+=*/g },
+  { name: 'Generic API Key',   regex: /(?:api.?key|apiKey)\s*[:=]\s*["']([A-Za-z0-9_\-]{20,})["']/gi, heuristic: true },
+  { name: 'Generic Password',  regex: /(?:password|passwd)\s*[:=]\s*["']([^"']{8,})["']/gi, heuristic: true },
+  { name: 'Bearer Token',      regex: /Bearer\s+[A-Za-z0-9\-._~+/]+=*/g, heuristic: true },
   { name: 'Private Key',       regex: /-----BEGIN (RSA |EC )?PRIVATE KEY-----/g },
-  { name: 'MongoDB with creds',regex: /mongodb(\+srv)?:\/\/[^:]+:[^@]+@/g },
+  // placeholder ها مثل ${MONGO_PASSWORD} یا <password> اعتبارنامه نیستند
+  { name: 'MongoDB with creds',regex: /mongodb(\+srv)?:\/\/[^:${}<>\s]+:[^@${}<>\s]+@/g },
 ];
 
 // ── File/Dir ignore list ──────────────────────────────────────────────────────
 
 const IGNORE_DIRS  = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', '.next']);
 const IGNORE_FILES = new Set(['.env.example', 'scan-secrets.js', 'setup-git-hooks.sh', 'package-lock.json']);
-const IGNORE_PATHS = ['config/firebase.client.js', 'controllers/auth.controller.js', 'middleware/auth.middleware.js', 'tests/', 'auth.test.js'];
+// عمداً خالی: نسخه‌ی قبلی دقیقاً همان فایل‌هایی را نادیده می‌گرفت که
+// کلید Firebase و JWT secret پیش‌فرض در آن‌ها بود. استثنا فقط از طریق
+// کامنت «scan-secrets: allow» در همان خط پذیرفته می‌شود.
+const IGNORE_PATHS = [];
+const ALLOW_MARKER = 'scan-secrets: allow';
 const SCAN_EXTS    = new Set(['.js', '.ts', '.json', '.html', '.env', '.yaml', '.yml', '.sh', '.config']);
 
 // ── Scanner ───────────────────────────────────────────────────────────────────
@@ -85,13 +90,22 @@ function scanFile(filePath) {
   scannedCount++;
   const lines = content.split('\n');
 
-  for (const { name, regex } of PATTERNS) {
+  // فایل‌های تست پر از رمزهای ساختگی هستند. کل مسیر tests/ را نادیده
+  // نمی‌گیریم (اشتباه نسخه‌ی قبلی که کلید واقعی Firebase را پنهان کرد) —
+  // فقط الگوهای heuristic آنجا خاموش می‌شوند.
+  const isTestFile = /(^|\/)tests?\//.test(relativePath) || /\.(test|spec)\.js$/.test(basename);
+
+  for (const { name, regex, heuristic } of PATTERNS) {
+    if (heuristic && isTestFile) continue;
     regex.lastIndex = 0;
     let match;
     while ((match = regex.exec(content)) !== null) {
       // شماره خط
       const lineNum = content.substring(0, match.index).split('\n').length;
       const snippet = match[0].substring(0, 60) + (match[0].length > 60 ? '...' : '');
+
+      // استثنای صریح و قابل بازبینی در code review
+      if ((lines[lineNum - 1] || '').includes(ALLOW_MARKER)) continue;
 
       findings.push({
         type:  'SECRET',

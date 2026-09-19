@@ -1,102 +1,175 @@
+'use strict';
+
+require('dotenv').config();
+
+const path = require('path');
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const https = require('https');
-const fs = require('fs');
-require('dotenv').config();
+const compression = require('compression');
+const cookieParser = require('cookie-parser');
+const hpp = require('hpp');
+const mongoSanitize = require('express-mongo-sanitize');
 
-// ============ CONFIGURATION ============
-// ADMIN_PANEL_ENABLED: Set to false to completely disable the admin panel
-const ADMIN_PANEL_ENABLED = true;
-// =======================================
+// fail-fast: اگر secret ای ناقص یا ضعیف باشد اپ اینجا متوقف می‌شود.
+// هیچ مقدار fallback ناامنی در کد وجود ندارد.
+const { getConfig } = require('./config/env.config');
+const config = getConfig();
 
-// Import routes
-const authRoutes = require('./routes/auth.routes');
-const userRoutes = require('./routes/user.routes');
-// const uploadRoutes = require('./routes/uploader.routes');
+const { generalLimiter } = require('./middleware/rateLimit.middleware');
+const { serverError } = require('./utils/http.util');
 
-// Admin Panel (only if enabled)
-let adminRoutes = null;
-if (ADMIN_PANEL_ENABLED) {
-  adminRoutes = require('./routes/admin.routes');
-}
-
-// Initialize express app
 const app = express();
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(cors());
+// ── Proxy ────────────────────────────────────────────────────────────────────
+// پشت nginx/ALB، بدون این تنظیم req.ip آدرس پراکسی است و rate limiting
+// همه‌ی کاربران را یک نفر می‌بیند.
+app.set('trust proxy', config.security.trustProxy);
+app.disable('x-powered-by');
+
+// ── Security headers ─────────────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-      scriptSrcAttr: ["'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net"],
-      fontSrc: ["'self'", "https://cdn.jsdelivr.net"],
-      imgSrc: ["'self'", "data:", "blob:"],
+      // نه 'unsafe-inline' و نه 'unsafe-eval': تمام JavaScript پنل در
+      // فایل‌های جدا است و هیچ inline handler ای وجود ندارد.
+      scriptSrc: ["'self'"],
+      scriptSrcAttr: ["'none'"],
+      // Tailwind در زمان اجرا یک <style> تزریق می‌کند و به این نیاز دارد.
+      // CSS injection در مقایسه با script injection خطر به‌مراتب کمتری دارد.
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      fontSrc: ["'self'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
       connectSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      ...(config.isProd ? { upgradeInsecureRequests: [] } : {}),
     },
   },
+  crossOriginEmbedderPolicy: false,
+  referrerPolicy: { policy: 'same-origin' },
+  hsts: config.isProd ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
 }));
-app.use(morgan('dev'));
 
-// Serve static assets (for admin panel)
-app.use('/assets', express.static('public/assets'));
+// ── CORS ─────────────────────────────────────────────────────────────────────
+// لیست سفید صریح — هرگز "*"، مخصوصاً چون credentials فعال است.
+app.use(cors({
+  origin(origin, callback) {
+    // درخواست‌های بدون Origin (curl، اپ موبایل، same-origin) مجازند
+    if (!origin) return callback(null, true);
+    if (config.cors.origins.includes(origin)) return callback(null, true);
+    return callback(new Error('Origin not allowed by CORS'));
+  },
+  credentials: config.cors.credentials,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Access-Token'],
+}));
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://mongodbg:27017/starter', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('Could not connect to MongoDB', err));
+// ── Body & cookies ───────────────────────────────────────────────────────────
+app.use(express.json({ limit: config.security.jsonBodyLimit }));
+app.use(express.urlencoded({ extended: false, limit: config.security.jsonBodyLimit }));
+app.use(cookieParser());
 
-// Routes
-app.use('/api/auth', authRoutes);
-// app.use('/api/uploader', uploadRoutes);
-app.use('/api/users', userRoutes);
+// حذف کلیدهای شروع‌شونده با $ و شامل نقطه — لایه‌ی دوم دفاع در برابر
+// NoSQL operator injection (لایه‌ی اول ولیدیشن Joi در هر مسیر است).
+app.use(mongoSanitize({ replaceWith: '_' }));
 
-// Admin Panel Routes (protected by API Key path)
-if (ADMIN_PANEL_ENABLED) {
-  const ADMIN_KEY = process.env.ADMIN_KEY || 'super-secret-admin';
-  app.use(`/${ADMIN_KEY}`, adminRoutes);
-  console.log(`✅ Admin Panel enabled at /${ADMIN_KEY}`);
-} else {
-  console.log('⛔ Admin Panel is disabled');
+// جلوگیری از HTTP Parameter Pollution (?role=user&role=admin)
+app.use(hpp());
+
+app.use(compression());
+
+// ── Logging ──────────────────────────────────────────────────────────────────
+if (!config.isTest) {
+  app.use(morgan(config.isProd ? 'combined' : 'dev'));
 }
 
-// Root route
+// ── Static assets ────────────────────────────────────────────────────────────
+// قبل از rate limiter: لود شدن دارایی‌های پنل (چند فایل در هر بازدید)
+// نباید سهم درخواست‌های API کاربر را مصرف کند. این فایل‌ها cache می‌شوند
+// و پشت reverse proxy سرو خواهند شد.
+app.use('/assets', express.static(path.join(__dirname, 'public', 'assets'), {
+  dotfiles: 'ignore',
+  maxAge: config.isProd ? '7d' : 0,
+  index: false,
+}));
+
+// ── Rate limiting ────────────────────────────────────────────────────────────
+app.use(generalLimiter);
+
+// ── Routes ───────────────────────────────────────────────────────────────────
+app.use('/api/auth', require('./routes/auth.routes'));
+app.use('/api/users', require('./routes/user.routes'));
+// app.use('/api/uploader', require('./routes/uploader.routes'));
+
+// پنل مدیریت — به صورت پیش‌فرض خاموش است.
+// مسیر ثابت /admin است و با لاگین واقعی + نقش ادمین محافظت می‌شود؛
+// «مخفی بودن مسیر» هیچ‌وقت یک مکانیزم احراز هویت نبوده است.
+if (config.admin.panelEnabled) {
+  app.use('/admin', require('./routes/admin.routes'));
+  console.log('✅ Admin panel enabled at /admin');
+} else {
+  console.log('⛔ Admin panel is disabled (ADMIN_PANEL_ENABLED=false)');
+}
+
 app.get('/', (req, res) => {
-  res.send('Welcome to Starter API');
+  res.json({ message: 'Welcome to Starter API' });
 });
 
-// Error handling middleware
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', db: mongoose.connection.readyState === 1 ? 'up' : 'down' });
+});
+
+// ── 404 ──────────────────────────────────────────────────────────────────────
+app.use((req, res) => {
+  res.status(404).json({ message: 'Not found' });
+});
+
+// ── Error handler ────────────────────────────────────────────────────────────
+// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).send({ message: 'Something went wrong!', error: err.message });
+  if (err && err.message === 'Origin not allowed by CORS') {
+    return res.status(403).json({ message: 'Origin not allowed' });
+  }
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ message: 'حجم درخواست بیش از حد مجاز است' });
+  }
+  if (err && (err instanceof SyntaxError) && 'body' in err) {
+    return res.status(400).json({ message: 'بدنه‌ی درخواست JSON معتبر نیست' });
+  }
+  // جزئیات فقط در لاگ سرور — هرگز به کلاینت
+  return serverError(res, err, 'unhandled');
 });
 
-// Start server
-const PORT = process.env.PORT || 3030;
-const HTTPS_PORT = process.env.HTTPS_PORT || 3031;
+// ── Startup ──────────────────────────────────────────────────────────────────
 
-// HTTP Server
-app.listen(PORT, () => {
-  console.log(`HTTP Server running on port ${PORT}`);
-});
+async function connectDB() {
+  await mongoose.connect(config.mongodb.uri);
+  console.log('Connected to MongoDB');
+}
 
-// HTTPS Server with SSL
-!process.env.NODE_ENV && https.createServer({
-  key: fs.readFileSync('/etc/letsencrypt/live/effiscope.space/privkey.pem'),
-  cert: fs.readFileSync('/etc/letsencrypt/live/effiscope.space/fullchain.pem'),
-}, app).listen(HTTPS_PORT, (err) => {
-  if (err) console.log(err);
-  else console.log(`HTTPS Server running on port ${HTTPS_PORT}`);
-});
+async function start() {
+  try {
+    await connectDB();
+  } catch (err) {
+    console.error('Could not connect to MongoDB:', err.message);
+    process.exit(1);
+  }
+
+  app.listen(config.port, () => {
+    console.log(`HTTP server running on port ${config.port} [${config.NODE_ENV}]`);
+  });
+}
+
+// TLS توسط reverse proxy (nginx / Caddy / ALB) انجام می‌شود —
+// اپ هرگز نباید مسیر گواهی را hardcode کند.
+if (require.main === module) {
+  start();
+}
 
 module.exports = app;

@@ -58,6 +58,12 @@ const parseServerRoutes = () => {
     }
   }
 
+  // Also support inline requires: app.use('/api/users', require('./routes/user.routes'));
+  const inlineUseRegex = /app\.use\(\s*['"]([^'"]+)['"]\s*,\s*require\(\s*['"]\.\/routes\/([^'"]+)['"]\s*\)\s*\)/g;
+  while ((match = inlineUseRegex.exec(content)) !== null) {
+    routePrefixes[match[2]] = match[1];
+  }
+
   // Fallback default prefixes if not explicitly defined or commented out
   if (!routePrefixes['user.routes'] && !routePrefixes['user.route']) {
     routePrefixes['user.routes'] = '/api/users';
@@ -203,6 +209,19 @@ const parseAdminRoutes = () => {
   return adminSections;
 };
 
+// parseAdminRoutes فایل‌های سورس را می‌خواند و parse می‌کند.
+// در production نتیجه cache می‌شود تا هر درخواست پنل باعث I/O دیسک نشود.
+let _cache = null;
+
+const parseAdminRoutesCached = () => {
+  if (process.env.NODE_ENV === 'production') {
+    if (!_cache) _cache = parseAdminRoutes();
+    return _cache;
+  }
+  return parseAdminRoutes();
+};
+
 module.exports = {
-  parseAdminRoutes
+  parseAdminRoutes: parseAdminRoutesCached,
+  parseAdminRoutesUncached: parseAdminRoutes
 };

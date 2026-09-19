@@ -1,0 +1,32 @@
+# هرگز secret ها داخل image نروند
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*service-account*.json
+*firebase-adminsdk*.json
+*credentials*.json
+
+# حجم و اطلاعات اضافی
+node_modules
+npm-debug.log*
+.git
+.gitignore
+.github
+coverage
+tests
+*.test.js
+uploads
+files
+*.log
+
+# ابزار توسعه
+.vscode
+.opencode
+.idea
+.DS_Store
+Jenkinsfile
+docker-compose.yml
+README.md

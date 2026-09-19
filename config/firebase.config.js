@@ -7,7 +7,6 @@
  * از محیط‌های cloud از FIREBASE_SERVICE_ACCOUNT_JSON استفاده کنید.
  */
 
-const admin  = require('firebase-admin');
 const path   = require('path');
 const fs     = require('fs');
 const { getConfig } = require('./env.config');
@@ -16,6 +15,18 @@ let _app = null;
 
 function getFirebaseAdmin() {
   if (_app) return _app;
+
+  // firebase-admin به صورت پیش‌فرض نصب نیست تا وزن و سطح حمله‌ی
+  // استارتر کم بماند. در صورت نیاز: npm install firebase-admin
+  let admin;
+  try {
+    // eslint-disable-next-line global-require
+    admin = require('firebase-admin');
+  } catch (err) {
+    throw new Error(
+      '[config] پکیج firebase-admin نصب نیست. برای استفاده از Firebase: npm install firebase-admin'
+    );
+  }
 
   const { firebase } = getConfig();
   let credential;

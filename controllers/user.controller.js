@@ -1,212 +1,226 @@
+'use strict';
+
 const User = require('../models/user.model');
 const bcrypt = require('bcryptjs');
+const { getConfig } = require('../config/env.config');
+const { serverError, escapeRegex } = require('../utils/http.util');
+const { toSafeUser } = require('../utils/token.util');
 
-// دریافت لیست کاربران (فقط برای ادمین)
+/**
+ * لیست کاربران (فقط ادمین).
+ * page/limit/search توسط listQuerySchema اعتبارسنجی و سقف‌دار شده‌اند.
+ */
 exports.getAllUsers = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search } = req.query;
-    
-    // ایجاد کوئری جستجو
+    const { page, limit, search } = req.validatedQuery;
+
     const query = {};
     if (search) {
+      // escape اجباری: بدون آن ورودی کاربر یک regex دلخواه می‌شود
+      // (نشت داده + ReDoS)
+      const safe = new RegExp(escapeRegex(search), 'i');
       query.$or = [
-        { username: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { firstName: { $regex: search, $options: 'i' } },
-        { lastName: { $regex: search, $options: 'i' } }
+        { username:  safe },
+        { email:     safe },
+        { firstName: safe },
+        { lastName:  safe },
       ];
     }
-    
-    // شمارش کل کاربران
-    const total = await User.countDocuments(query);
-    
-    // دریافت کاربران با صفحه‌بندی
-    const users = await User.find(query)
-      .select('-password')
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit));
-    
-    res.status(200).json({
-      users,
-      totalPages: Math.ceil(total / limit),
-      currentPage: parseInt(page),
-      totalUsers: total
+
+    const [total, users] = await Promise.all([
+      User.countDocuments(query),
+      User.find(query)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+    ]);
+
+    return res.status(200).json({
+      users: users.map(u => ({ ...u, password: undefined, __v: undefined })),
+      totalPages: Math.ceil(total / limit) || 1,
+      currentPage: page,
+      totalUsers: total,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return serverError(res, error, 'getAllUsers');
   }
 };
 
-// دریافت اطلاعات یک کاربر با شناسه
+/**
+ * دریافت یک کاربر با شناسه.
+ */
 exports.getUserById = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select('-password');
-    
+    const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
-    res.status(200).json(user);
+    return res.status(200).json(toSafeUser(user));
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return serverError(res, error, 'getUserById');
   }
 };
 
-// ایجاد کاربر جدید (ادمین)
+/**
+ * ایجاد کاربر جدید (ادمین).
+ */
 exports.createUser = async (req, res) => {
   try {
     const { firstName, lastName, username, email, phone, password, role, status } = req.body;
 
-    if (!firstName || !lastName || !username || !password || !role) {
-      return res.status(400).json({ message: 'All required fields must be provided.' });
+    const or = [{ username }];
+    if (email) or.push({ email });
+    if (phone) or.push({ phone });
+
+    const existing = await User.findOne({ $or: or });
+    if (existing) {
+      return res.status(409).json({
+        message: 'نام کاربری، ایمیل یا شماره موبایل قبلاً ثبت شده است.',
+      });
     }
 
-    // بررسی تکراری نبودن نام کاربری
-    const existingUsername = await User.findOne({ username });
-    if (existingUsername) {
-      return res.status(400).json({ message: 'Username is already taken.' });
-    }
-
-    // بررسی تکراری نبودن ایمیل
-    if (email) {
-      const existingEmail = await User.findOne({ email });
-      if (existingEmail) {
-        return res.status(400).json({ message: 'Email is already registered.' });
-      }
-    }
-
-    // بررسی تکراری نبودن تلفن
-    if (phone) {
-      const existingPhone = await User.findOne({ phone });
-      if (existingPhone) {
-        return res.status(400).json({ message: 'Phone is already registered.' });
-      }
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const newUser = new User({
+    const { security } = getConfig();
+    const newUser = await User.create({
       firstName,
       lastName,
       username,
-      email,
-      phone,
-      password: hashedPassword,
+      email: email || undefined,
+      phone: phone || undefined,
+      password: await bcrypt.hash(password, security.bcryptRounds),
       role,
-      status: status !== undefined ? status : true
+      status: status !== undefined ? status : true,
     });
 
-    await newUser.save();
-
-    const userResponse = newUser.toObject();
-    delete userResponse.password;
-
-    res.status(201).json({
+    return res.status(201).json({
       message: 'User successfully created.',
-      user: userResponse
+      user: toSafeUser(newUser),
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    if (error && error.code === 11000) {
+      return res.status(409).json({ message: 'این مقدار قبلاً ثبت شده است' });
+    }
+    return serverError(res, error, 'createUser');
   }
 };
 
-// بروزرسانی اطلاعات کاربر
+/**
+ * بروزرسانی کاربر (ادمین).
+ */
 exports.updateUser = async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
-    
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
+
+    const isSelf = req.userId === req.params.id;
     const { firstName, lastName, username, email, phone, password, role, status } = req.body;
-    
+
+    // جلوگیری از قفل شدن بیرون سیستم: ادمین نمی‌تواند نقش یا وضعیت
+    // حساب خودش را پایین بیاورد
+    if (isSelf && role && role !== user.role) {
+      return res.status(400).json({ message: 'نمی‌توانید نقش حساب خودتان را تغییر دهید.' });
+    }
+    if (isSelf && status === false) {
+      return res.status(400).json({ message: 'نمی‌توانید حساب خودتان را غیرفعال کنید.' });
+    }
+
     if (username && username !== user.username) {
-      const existingUsername = await User.findOne({ username });
-      if (existingUsername) {
-        return res.status(400).json({ message: 'Username is already taken.' });
+      if (await User.exists({ username })) {
+        return res.status(409).json({ message: 'Username is already taken.' });
       }
       user.username = username;
     }
 
-    if (email && email !== user.email) {
-      const existingEmail = await User.findOne({ email });
-      if (existingEmail) {
-        return res.status(400).json({ message: 'Email is already registered.' });
+    if (email !== undefined) {
+      if (email === '') {
+        user.email = undefined;
+      } else if (email !== user.email) {
+        if (await User.exists({ email })) {
+          return res.status(409).json({ message: 'Email is already registered.' });
+        }
+        user.email = email;
       }
-      user.email = email;
-    } else if (email === "") {
-      user.email = undefined;
     }
 
-    if (phone && phone !== user.phone) {
-      const existingPhone = await User.findOne({ phone });
-      if (existingPhone) {
-        return res.status(400).json({ message: 'Phone is already registered.' });
+    if (phone !== undefined) {
+      if (phone === '') {
+        user.phone = undefined;
+      } else if (phone !== user.phone) {
+        if (await User.exists({ phone })) {
+          return res.status(409).json({ message: 'Phone is already registered.' });
+        }
+        user.phone = phone;
       }
-      user.phone = phone;
-    } else if (phone === "") {
-      user.phone = undefined;
     }
-    
+
     if (firstName) user.firstName = firstName;
-    if (lastName) user.lastName = lastName;
-    if (role) user.role = role;
+    if (lastName)  user.lastName  = lastName;
+    if (role)      user.role      = role;
     if (status !== undefined) user.status = status;
-    
+
     if (password) {
-      user.password = await bcrypt.hash(password, 10);
+      const { security } = getConfig();
+      user.password = await bcrypt.hash(password, security.bcryptRounds);
     }
-    
+
     await user.save();
-    
-    const userResponse = user.toObject();
-    delete userResponse.password;
-    
-    res.status(200).json({
+
+    return res.status(200).json({
       message: 'User information was successfully updated.',
-      user: userResponse
+      user: toSafeUser(user),
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    if (error && error.code === 11000) {
+      return res.status(409).json({ message: 'این مقدار قبلاً ثبت شده است' });
+    }
+    return serverError(res, error, 'updateUser');
   }
 };
 
-// حذف کاربر (فقط ادمین)
+/**
+ * حذف کاربر (ادمین).
+ */
 exports.deleteUser = async (req, res) => {
   try {
+    if (req.userId === req.params.id) {
+      return res.status(400).json({ message: 'نمی‌توانید حساب خودتان را حذف کنید.' });
+    }
+
     const user = await User.findByIdAndDelete(req.params.id);
-    
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
-    
-    res.status(200).json({
-      message: 'User successfully deleted.'
-    });
+
+    return res.status(200).json({ message: 'User successfully deleted.' });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return serverError(res, error, 'deleteUser');
   }
 };
 
-// غیرفعال/فعال کردن کاربر (فقط ادمین)
+/**
+ * فعال/غیرفعال کردن کاربر (ادمین).
+ */
 exports.toggleUserStatus = async (req, res) => {
   try {
+    if (req.userId === req.params.id) {
+      return res.status(400).json({ message: 'نمی‌توانید وضعیت حساب خودتان را تغییر دهید.' });
+    }
+
     const user = await User.findById(req.params.id);
-    
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
-    
+
     user.status = !user.status;
     await user.save();
-    
-    res.status(200).json({
+
+    return res.status(200).json({
       message: `User successfully ${user.status ? 'activated' : 'deactivated'}.`,
-      status: user.status
+      status: user.status,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return serverError(res, error, 'toggleUserStatus');
   }
 };

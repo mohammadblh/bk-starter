@@ -1,19 +1,32 @@
+# Dependencies
 /node_modules
+
+# Logs
 error-log.log
+*.log
+npm-debug.log*
+
+# Runtime data
 /files
 /uploads
-.env# Secrets & credentials (SCN-051/052)
+/coverage
+
+# ── Secrets & credentials ────────────────────────────────────────────
+.env
 .env.local
 .env.*.local
 .env.production
 *.pem
 *.key
+*.p12
 *service-account*.json
 *firebase-adminsdk*.json
 *credentials*.json
 config/secrets/
+
 # AWS
 .aws/
 aws-credentials
 
-.env
+# OS / editor
+.DS_Store
